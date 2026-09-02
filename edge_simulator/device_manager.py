@@ -19,17 +19,22 @@ class DeviceManager:
         await asyncio.sleep(0.1 * self.devices.index(device))
         
         while self._running:
-            if device.status == "online":
-                reading = device.generate_reading()
-                data = {
-                    "device_id": device.device_id,
-                    "device_name": device.device_name,
-                    "sensors": reading
-                }
-                if asyncio.iscoroutinefunction(callback):
-                    await callback(data)
-                else:
-                    callback(data)
+            try:
+                if device.status == "online":
+                    reading = device.generate_reading()
+                    data = {
+                        "device_id": device.device_id,
+                        "device_name": device.device_name,
+                        "sensors": reading
+                    }
+                    if asyncio.iscoroutinefunction(callback):
+                        await callback(data)
+                    else:
+                        callback(data)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[DEVICE {device.device_id}] Error in sensor loop: {e}")
             await asyncio.sleep(0.5)
 
     def toggle_device(self, device_id: str) -> str:

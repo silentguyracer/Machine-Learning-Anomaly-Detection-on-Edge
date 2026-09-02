@@ -1,5 +1,6 @@
 // WebSocket connection
-const WS_URL = `ws://${window.location.host}/ws`;
+const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${wsProtocol}//${window.location.host}/ws`;
 let ws = null;
 let reconnectTimer = null;
 

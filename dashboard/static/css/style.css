@@ -246,6 +246,16 @@ h1, h2, h3, h4, h5, h6 {
     position: relative;
     overflow: hidden;
 }
+.device-card.anomaly-LOW {
+    border-color: var(--sev-low);
+    box-shadow: 0 0 15px rgba(234, 179, 8, 0.3);
+    animation: borderPulseLow 2.5s infinite;
+}
+.device-card.anomaly-MEDIUM {
+    border-color: var(--sev-medium);
+    box-shadow: 0 0 18px rgba(249, 115, 22, 0.35);
+    animation: borderPulseMedium 2s infinite;
+}
 .device-card.anomaly-HIGH {
     border-color: var(--sev-high);
     box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
@@ -257,6 +267,16 @@ h1, h2, h3, h4, h5, h6 {
     animation: borderPulseCrit 1s infinite;
 }
 
+@keyframes borderPulseLow {
+    0% { box-shadow: 0 0 6px rgba(234, 179, 8, 0.15); }
+    50% { box-shadow: 0 0 14px rgba(234, 179, 8, 0.35); }
+    100% { box-shadow: 0 0 6px rgba(234, 179, 8, 0.15); }
+}
+@keyframes borderPulseMedium {
+    0% { box-shadow: 0 0 8px rgba(249, 115, 22, 0.2); }
+    50% { box-shadow: 0 0 18px rgba(249, 115, 22, 0.45); }
+    100% { box-shadow: 0 0 8px rgba(249, 115, 22, 0.2); }
+}
 @keyframes borderPulseHigh {
     0% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
     50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
@@ -294,11 +314,16 @@ h1, h2, h3, h4, h5, h6 {
     background: var(--sev-normal);
     box-shadow: 0 0 8px var(--sev-normal);
 }
+.status-badge.offline {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
 .status-badge.offline .pulse-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--text-secondary);
+    background: #ef4444;
+    animation: none;
 }
 
 /* Anomaly Gauge */
@@ -504,6 +529,8 @@ h1, h2, h3, h4, h5, h6 {
     border-radius: 4px;
     font-weight: 700;
 }
+.alert-badge.LOW { background: rgba(234, 179, 8, 0.2); color: var(--sev-low); }
+.alert-badge.MEDIUM { background: rgba(249, 115, 22, 0.2); color: var(--sev-medium); }
 .alert-badge.HIGH { background: rgba(239, 68, 68, 0.2); color: var(--sev-high); }
 .alert-badge.CRITICAL { background: rgba(220, 38, 38, 0.2); color: var(--sev-critical); }
 .alert-message {

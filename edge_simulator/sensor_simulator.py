@@ -114,9 +114,11 @@ class SensorSimulator:
                     state["drift_acc"] += state["intensity"]
                     reading[sensor] += state["drift_acc"]
                 elif a_type == "oscillation":
-                    reading[sensor] += state["intensity"] * math.sin(t * 3.14)
+                    reading[sensor] += state["intensity"] * math.sin(0.8 * t)
                 elif a_type == "flatline":
-                    reading[sensor] = self.base_values[sensor] # fixed
+                    # Stuck-at extreme: freeze at upper range boundary to be detectable
+                    extremes = {"temperature": 95.0, "vibration": 0.0, "current": 7.5, "pressure": 0.5}
+                    reading[sensor] = extremes.get(sensor, self.base_values[sensor])
             
             state["steps_remaining"] -= 1
             if state["steps_remaining"] <= 0:

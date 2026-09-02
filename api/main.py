@@ -4,11 +4,11 @@ import asyncio
 import traceback
 from datetime import datetime, timezone
 import uuid
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi import Request
+from contextlib import asynccontextmanager
 
 # Ensure we can import from core and edge_simulator
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,7 +25,29 @@ from api.routes.data import router as data_router
 import api.routes.websocket as ws_module
 import api.routes.data as data_module
 
-app = FastAPI(title="Edge Anomaly Detection")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("Initializing Database...")
+    await init_db(actual_db_path)
+    
+    print("Starting Database Worker...")
+    await db_manager.start()
+    
+    print("Starting Device Manager...")
+    await device_manager.start(process_reading)
+    
+    asyncio.create_task(stats_loop())
+    print("System ready!")
+    
+    yield
+    
+    # Shutdown
+    print("Shutting down...")
+    device_manager.stop()
+    await db_manager.stop()
+
+app = FastAPI(title="Edge Anomaly Detection", lifespan=lifespan)
 
 # Setup Paths
 static_dir = os.path.join(project_root, "dashboard", "static")
@@ -58,6 +80,15 @@ data_module.device_manager = device_manager
 data_module.detector = detector
 data_module.db_manager = db_manager
 
+# Wire up recent alerts loader for WebSocket initial state
+from api.database import get_recent_alerts
+async def _load_recent_alerts_from_db():
+    try:
+        return await get_recent_alerts(actual_db_path, limit=20)
+    except Exception:
+        return []
+ws_module._load_recent_alerts = _load_recent_alerts_from_db
+
 app.include_router(ws_router)
 app.include_router(data_router)
 
@@ -79,6 +110,11 @@ async def process_reading(reading: dict):
         # 2. Run detector
         anomaly_score, is_anomaly, model_verdicts, anomalous_sensors = detector.detect(reading, sensor_window)
         severity = determine_severity(anomaly_score)
+        
+        # Fix: if detector flagged anomaly but score yields NORMAL severity, bump to LOW minimum
+        from core.alert_manager import Severity
+        if is_anomaly and severity == Severity.NORMAL:
+            severity = Severity.LOW
 
         # Only expose the 3 model keys the dashboard expects
         frontend_verdicts = {
@@ -150,24 +186,6 @@ async def stats_loop():
         await ws_manager.broadcast(stats_msg)
         print(f"[STATS] readings={total_readings} anomalies={total_anomalies} rate={rate:.1f}%")
 
-@app.on_event("startup")
-async def startup_event():
-    print("Initializing Database...")
-    await init_db(actual_db_path)
-    
-    print("Starting Database Worker...")
-    await db_manager.start()
-    
-    print("Starting Device Manager...")
-    await device_manager.start(process_reading)
-    
-    asyncio.create_task(stats_loop())
-    print("System ready!")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    device_manager.stop()
-    await db_manager.stop()
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):

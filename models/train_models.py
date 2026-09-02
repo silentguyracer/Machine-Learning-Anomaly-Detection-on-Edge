@@ -4,6 +4,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
 import joblib
+import sqlite3
 
 def generate_synthetic_data(num_samples=5000):
     t = np.arange(num_samples)
@@ -50,14 +51,13 @@ def main():
     print(f"Models saved successfully to {save_dir}")
     print("Validation results: Models trained on normal baseline data.")
 
-import sqlite3
-
 def retrain_from_db(db_path: str, save_dir: str) -> dict:
     print(f"Retraining models from data source: {db_path}")
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found at {db_path}. Run simulation first to collect baseline logs.")
         
-    db_uri = f"file:{os.path.abspath(db_path)}?mode=ro"
+    db_abs_path = os.path.abspath(db_path).replace("\\", "/")
+    db_uri = f"file:{db_abs_path}?mode=ro"
     conn = sqlite3.connect(db_uri, uri=True, timeout=30.0)
     cursor = conn.cursor()
     
