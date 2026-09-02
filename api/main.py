@@ -63,9 +63,12 @@ os.makedirs(os.path.dirname(actual_db_path), exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
+from core.predictive_maintenance import PredictiveMaintenanceEngine
+
 # Global State
 device_manager = DeviceManager()
 detector = AnomalyDetector(project_root)
+pdm_engine = PredictiveMaintenanceEngine(history_len=50)
 sensor_window = SensorWindow(window_size=30)
 start_time = datetime.now(timezone.utc)
 db_manager = DatabaseManager(actual_db_path)
@@ -79,6 +82,7 @@ data_module._get_total_anomalies = lambda: total_anomalies
 data_module.device_manager = device_manager
 data_module.detector = detector
 data_module.db_manager = db_manager
+data_module.pdm_engine = pdm_engine
 
 # Wire up recent alerts loader for WebSocket initial state
 from api.database import get_recent_alerts
@@ -107,23 +111,29 @@ async def process_reading(reading: dict):
         for sensor, val in reading["sensors"].items():
             sensor_window.add_reading(device_id, sensor, val)
 
-        # 2. Run detector
-        anomaly_score, is_anomaly, model_verdicts, anomalous_sensors = detector.detect(reading, sensor_window)
+        # 2. Run detector (ensemble: IF, AE, LOF, STAT, RANGE)
+        anomaly_score, is_anomaly, model_verdicts, anomalous_sensors, attributions, latent_coords = detector.detect(reading, sensor_window)
         severity = determine_severity(anomaly_score)
         
-        # Fix: if detector flagged anomaly but score yields NORMAL severity, bump to LOW minimum
+        # Enforce minimum severity for anomalies
         from core.alert_manager import Severity
         if is_anomaly and severity == Severity.NORMAL:
             severity = Severity.LOW
 
-        # Only expose the 3 model keys the dashboard expects
+        # 3. Calculate Predictive Maintenance Metrics
+        health_score, rul_minutes, condition_state = pdm_engine.update_telemetry(
+            device_id, anomaly_score, is_anomaly, reading["sensors"]
+        )
+
         frontend_verdicts = {
-            "isolation_forest": model_verdicts.get("isolation_forest", False),
-            "lof": model_verdicts.get("lof", False),
-            "statistical": model_verdicts.get("statistical", False),
+            "isolation_forest": bool(model_verdicts.get("isolation_forest", False)),
+            "autoencoder": bool(model_verdicts.get("autoencoder", False)),
+            "lof": bool(model_verdicts.get("lof", False)),
+            "statistical": bool(model_verdicts.get("statistical", False)),
+            "range": bool(model_verdicts.get("range", False))
         }
 
-        # 3. Build update message
+        # 4. Build update message with advanced telemetry
         msg = {
             "type": "sensor_update",
             "device_id": device_id,
@@ -135,10 +145,15 @@ async def process_reading(reading: dict):
             "severity": severity.value,
             "model_verdicts": frontend_verdicts,
             "anomalous_sensors": anomalous_sensors,
+            "attributions": attributions,
+            "latent_coords": latent_coords,
+            "health_score": health_score,
+            "rul_minutes": rul_minutes,
+            "condition_state": condition_state,
             "alert_message": ""
         }
 
-        # 4. Broadcast sensor update
+        # 5. Broadcast sensor update
         await ws_manager.broadcast(msg)
 
         # 5. Handle anomaly / Alert

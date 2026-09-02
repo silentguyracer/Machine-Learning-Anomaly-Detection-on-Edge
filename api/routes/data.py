@@ -28,17 +28,26 @@ _get_total_anomalies: Callable = lambda: 0
 device_manager = None
 detector = None
 
+pdm_engine = None
+
 class AnomalyTriggerRequest(BaseModel):
     anomaly_type: str
     affected_sensors: List[str]
 
 class ConfigUpdateRequest(BaseModel):
     w_iso: Optional[float] = None
+    w_ae: Optional[float] = None
     w_lof: Optional[float] = None
     w_stat: Optional[float] = None
     w_range: Optional[float] = None
     anomaly_threshold: Optional[float] = None
     z_threshold: Optional[float] = None
+
+@router.get("/api/devices/{device_id}/pdm")
+async def api_get_device_pdm(device_id: str):
+    if pdm_engine is None:
+        raise HTTPException(status_code=503, detail="Predictive maintenance engine not initialized")
+    return pdm_engine.get_device_summary(device_id)
 
 @router.get("/api/stats")
 async def api_get_stats():

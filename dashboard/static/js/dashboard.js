@@ -6,6 +6,65 @@ let reconnectTimer = null;
 
 // Device state registry
 const devices = {};  
+let activeModalDeviceId = null;
+let audioAlarmEnabled = true;
+let audioCtx = null;
+
+// Web Audio API Industrial Alarm Synthesizer
+function playIndustrialAlert(severity) {
+    if (!audioAlarmEnabled) return;
+    try {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        
+        const osc1 = audioCtx.createOscillator();
+        const osc2 = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        const now = audioCtx.currentTime;
+        const freq1 = (severity === 'CRITICAL') ? 880 : 660;
+        const freq2 = (severity === 'CRITICAL') ? 1100 : 780;
+        
+        osc1.type = 'sawtooth';
+        osc2.type = 'sine';
+        osc1.frequency.setValueAtTime(freq1, now);
+        osc2.frequency.setValueAtTime(freq2, now);
+        
+        gainNode.gain.setValueAtTime(0.08, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+        
+        osc1.connect(gainNode);
+        osc2.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 0.3);
+        osc2.stop(now + 0.3);
+    } catch(e) {
+        // Audio policy or unsupported
+    }
+}
+
+function toggleAudioAlarm() {
+    audioAlarmEnabled = !audioAlarmEnabled;
+    const btn = document.getElementById('audio-alarm-btn');
+    const icon = document.getElementById('audio-icon');
+    const text = document.getElementById('audio-text');
+    if (audioAlarmEnabled) {
+        btn.classList.remove('muted');
+        icon.textContent = '🔔';
+        text.textContent = 'Audio Alert: ON';
+    } else {
+        btn.classList.add('muted');
+        icon.textContent = '🔕';
+        text.textContent = 'Audio Alert: MUTED';
+    }
+}
 
 function connectWebSocket() {
     ws = new WebSocket(WS_URL);
@@ -26,7 +85,6 @@ function connectWebSocket() {
     
     ws.onclose = () => {
         updateConnectionStatus('disconnected');
-        // Auto-reconnect after 3 seconds
         reconnectTimer = setTimeout(connectWebSocket, 3000);
     };
     
@@ -66,7 +124,6 @@ function handleInitialState(msg) {
         });
     }
     if (msg.recent_alerts && Array.isArray(msg.recent_alerts)) {
-        // Clear and add in reverse so oldest is at bottom
         clearAlerts();
         [...msg.recent_alerts].reverse().forEach(alert => addAlert(alert));
     }
@@ -77,11 +134,11 @@ function createDeviceCard(device) {
     if (!grid) return;
     
     const cardHtml = `
-        <div class="device-card ${device.status === 'offline' ? 'device-offline' : ''}" id="card-${device.id}" data-device-id="${device.id}">
+        <div class="device-card ${device.status === 'offline' ? 'device-offline' : ''}" id="card-${device.id}" data-device-id="${device.id}" onclick="openDeviceModal('${device.id}')">
             <div class="card-header">
                 <div class="device-name">${device.name}</div>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <label class="switch">
+                    <label class="switch" onclick="event.stopPropagation()">
                         <input type="checkbox" id="status-toggle-${device.id}" ${device.status === 'online' ? 'checked' : ''} onchange="toggleDeviceConnection('${device.id}')">
                         <span class="slider-round"></span>
                     </label>
@@ -89,6 +146,13 @@ function createDeviceCard(device) {
                         <span class="pulse-dot"></span><span class="status-badge-text">${(device.status || 'OFFLINE').toUpperCase()}</span>
                     </div>
                 </div>
+            </div>
+
+            <!-- Health & Prognostics Pill Bar -->
+            <div class="device-pdm-bar" id="pdm-bar-${device.id}">
+                <div>Health: <span class="health-pill" id="pdm-health-${device.id}">100%</span></div>
+                <div>RUL: <span class="rul-pill" id="pdm-rul-${device.id}">720m</span></div>
+                <div>Status: <span id="pdm-state-${device.id}" style="font-weight:600; color:var(--accent-blue-light)">OPTIMAL</span></div>
             </div>
             
             <div class="anomaly-gauge-container">
@@ -129,10 +193,12 @@ function createDeviceCard(device) {
             <div class="remedy-action-container" id="remedy-container-${device.id}"></div>
 
             <div class="model-verdicts" id="verdicts-${device.id}">
-                <span class="verdict-badge" id="verdict-${device.id}-isolation_forest">IF</span>
-                <span class="verdict-badge" id="verdict-${device.id}-lof">LOF</span>
-                <span class="verdict-badge" id="verdict-${device.id}-statistical">STAT</span>
-                <button class="inject-trigger-btn" onclick="toggleInjectPanel(event, '${device.id}')">⚡ Inject</button>
+                <span class="verdict-badge" id="verdict-${device.id}-isolation_forest" title="Isolation Forest">IF</span>
+                <span class="verdict-badge" id="verdict-${device.id}-autoencoder" title="Neural Autoencoder">AE</span>
+                <span class="verdict-badge" id="verdict-${device.id}-lof" title="Local Outlier Factor">LOF</span>
+                <span class="verdict-badge" id="verdict-${device.id}-statistical" title="Z-Score Test">STAT</span>
+                <span class="verdict-badge" id="verdict-${device.id}-range" title="Range Rules">BOUND</span>
+                <button class="inject-trigger-btn" onclick="toggleInjectPanel(event, '${device.id}')">⚡ Fault</button>
             </div>
             
             <div class="inject-panel" id="inject-panel-${device.id}" style="display: none;" onclick="event.stopPropagation()">
@@ -143,7 +209,7 @@ function createDeviceCard(device) {
                         <option value="spike">Spike (Transient Peak)</option>
                         <option value="drift">Drift (Sensor Degrade)</option>
                         <option value="oscillation">Oscillation (Unstable Sine)</option>
-                        <option value="flatline">Flatline (Sensor Dead)</option>
+                        <option value="flatline">Flatline (Sensor Dead Rail)</option>
                     </select>
                 </div>
                 <div class="inject-row">
@@ -166,25 +232,24 @@ function createDeviceCard(device) {
 function handleSensorUpdate(msg) {
     const devId = msg.device_id;
     
-    // If device doesn't exist yet, create it dynamically
     if (!devices[devId]) {
         const newDev = { id: devId, name: msg.device_name, status: 'online' };
         createDeviceCard(newDev);
         devices[devId] = newDev;
         initDeviceCharts(devId);
     }
+
+    // Save latest telemetry in local state
+    devices[devId].latestTelemetry = msg;
     
     // Update text values
     if (msg.sensors) {
         for (const [key, val] of Object.entries(msg.sensors)) {
             const el = document.getElementById(`val-${devId}-${key}`);
             if (el) {
-                // Formatting for display
                 el.textContent = (typeof val === 'number') ? val.toFixed(1) : val;
             }
         }
-        
-        // Update charts
         updateDeviceCharts(devId, msg.sensors, msg.is_anomaly, msg.anomalous_sensors);
     }
     
@@ -203,9 +268,65 @@ function handleSensorUpdate(msg) {
             }
         }
     }
+
+    // Update PdM Prognostics (Health Index & RUL)
+    if (msg.health_score !== undefined) {
+        const healthEl = document.getElementById(`pdm-health-${devId}`);
+        if (healthEl) {
+            healthEl.textContent = `${Math.round(msg.health_score)}%`;
+            if (msg.health_score < 40) healthEl.style.color = 'var(--sev-high)';
+            else if (msg.health_score < 70) healthEl.style.color = 'var(--sev-medium)';
+            else healthEl.style.color = 'var(--sev-normal)';
+        }
+    }
+    if (msg.rul_minutes !== undefined) {
+        const rulEl = document.getElementById(`pdm-rul-${devId}`);
+        if (rulEl) rulEl.textContent = `${msg.rul_minutes}m`;
+    }
+    if (msg.condition_state) {
+        const stateEl = document.getElementById(`pdm-state-${devId}`);
+        if (stateEl) stateEl.textContent = msg.condition_state;
+    }
+
+    // Update 2D Latent space PCA projection
+    if (msg.latent_coords) {
+        updateLatentChart(msg.latent_coords, msg.is_anomaly);
+    }
     
     // Toggle overall anomaly state UI
     toggleAnomalyState(devId, msg.is_anomaly, msg.severity, msg.anomalous_sensors);
+
+    // If modal is active for this device, refresh modal contents
+    if (activeModalDeviceId === devId) {
+        refreshModalData(msg);
+    }
+
+    // Update average fleet health
+    updateFleetHealthAvg();
+}
+
+function updateFleetHealthAvg() {
+    const devList = Object.values(devices);
+    if (!devList.length) return;
+    
+    let sum = 0, count = 0;
+    devList.forEach(d => {
+        if (d.latestTelemetry && d.latestTelemetry.health_score !== undefined) {
+            sum += d.latestTelemetry.health_score;
+            count++;
+        }
+    });
+    
+    if (count > 0) {
+        const avg = Math.round(sum / count);
+        const el = document.getElementById('stat-fleet-health');
+        if (el) {
+            el.textContent = `${avg}%`;
+            if (avg < 50) el.style.color = 'var(--sev-high)';
+            else if (avg < 75) el.style.color = 'var(--sev-medium)';
+            else el.style.color = 'var(--sev-normal)';
+        }
+    }
 }
 
 function handleSystemStats(msg) {
@@ -218,13 +339,16 @@ function handleSystemStats(msg) {
 
 function handleAlert(msg) {
     addAlert(msg);
+    if (msg.severity === 'HIGH' || msg.severity === 'CRITICAL') {
+        playIndustrialAlert(msg.severity);
+    }
 }
 
 function updateConnectionStatus(status) {
     const el = document.getElementById('connection-status');
     const textEl = el.querySelector('.status-text');
     
-    el.className = 'connection-status'; // reset
+    el.className = 'connection-status';
     if (status === 'connected') {
         el.classList.add('status-connected');
         textEl.textContent = 'LIVE';
@@ -241,31 +365,85 @@ function toggleAnomalyState(deviceId, isAnomaly, severity, anomalousSensors) {
     const card = document.getElementById(`card-${deviceId}`);
     if (!card) return;
     
-    // Remove old severity classes
     card.classList.remove('anomaly-LOW', 'anomaly-MEDIUM', 'anomaly-HIGH', 'anomaly-CRITICAL');
     
     const container = document.getElementById(`remedy-container-${deviceId}`);
     if (isAnomaly) {
         card.classList.add(`anomaly-${severity.toUpperCase()}`);
         
-        // Show remediation action recommendation based on anomalous sensor
         let remedyText = "General System Calibration";
         if (anomalousSensors && anomalousSensors.length > 0) {
             const primarySensor = anomalousSensors[0];
-            if (primarySensor === 'temperature') remedyText = "Adjust Coolant Flow";
-            else if (primarySensor === 'vibration') remedyText = "Calibrate Dynamic Balance";
-            else if (primarySensor === 'current') remedyText = "Stabilize Voltage Supply";
-            else if (primarySensor === 'pressure') remedyText = "Release Pressure Valve";
+            if (primarySensor === 'temperature') remedyText = "Trigger Coolant Flush";
+            else if (primarySensor === 'vibration') remedyText = "Dampen Dynamic Rotor Resonance";
+            else if (primarySensor === 'current') remedyText = "Power Throttle Voltage Bus";
+            else if (primarySensor === 'pressure') remedyText = "Engage Relief Bypass Valve";
         }
         
         container.innerHTML = `
-            <div class="remedy-box">
-                <span class="remedy-recommendation">🔧 Recommended: ${remedyText}</span>
-                <button class="remedy-btn" onclick="executeRemedy('${deviceId}', this)">Resolve</button>
+            <div class="remedy-box" onclick="event.stopPropagation()">
+                <span class="remedy-recommendation">🔧 SCADA Action: ${remedyText}</span>
+                <button class="remedy-btn" onclick="executeRemedy('${deviceId}', this)">Execute</button>
             </div>
         `;
     } else {
         container.innerHTML = "";
+    }
+}
+
+// Deep-Dive Modal Controller
+function openDeviceModal(deviceId) {
+    const dev = devices[deviceId];
+    if (!dev) return;
+    
+    activeModalDeviceId = deviceId;
+    document.getElementById('modal-device-name').textContent = `${dev.name} Diagnostics`;
+    document.getElementById('modal-device-id').textContent = `Device Node: ${dev.id}`;
+    
+    const modal = document.getElementById('device-modal');
+    modal.style.display = 'flex';
+    
+    if (!modalTimelineChart) {
+        initModalTimelineChart();
+    }
+    
+    if (dev.latestTelemetry) {
+        refreshModalData(dev.latestTelemetry);
+    }
+}
+
+function closeDeviceModal(event) {
+    if (event) event.stopPropagation();
+    const modal = document.getElementById('device-modal');
+    if (modal) modal.style.display = 'none';
+    activeModalDeviceId = null;
+}
+
+function refreshModalData(telemetry) {
+    document.getElementById('modal-health-val').textContent = `${Math.round(telemetry.health_score || 100)}%`;
+    document.getElementById('modal-rul-val').textContent = `${telemetry.rul_minutes || 720} min`;
+    document.getElementById('modal-state-val').textContent = telemetry.condition_state || 'OPTIMAL';
+    document.getElementById('modal-score-val').textContent = (telemetry.anomaly_score || 0).toFixed(3);
+    
+    if (telemetry.sensors) {
+        updateModalTimelineChart(telemetry.sensors);
+    }
+    
+    // Render Autoencoder feature attribution bars
+    const barsContainer = document.getElementById('modal-attribution-bars');
+    if (barsContainer && telemetry.attributions) {
+        const colors = { temperature: '#f97316', vibration: '#a78bfa', current: '#22c55e', pressure: '#38bdf8' };
+        barsContainer.innerHTML = Object.entries(telemetry.attributions).map(([sensor, pct]) => `
+            <div class="attr-row">
+                <div class="attr-row-header">
+                    <span style="text-transform: capitalize; color: ${colors[sensor] || '#fff'}">● ${sensor}</span>
+                    <span style="font-family: monospace; font-weight:600">${pct}%</span>
+                </div>
+                <div class="attr-bar-bg">
+                    <div class="attr-bar-fill" style="width: ${pct}%; background: ${colors[sensor] || '#3b82f6'}"></div>
+                </div>
+            </div>
+        `).join('');
     }
 }
 
@@ -287,6 +465,7 @@ function formatUptime(seconds) {
 // Init on DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
+    initLatentChart();
     setInterval(updateClock, 1000);
     updateClock();
     fetchCurrentConfig();
@@ -347,7 +526,6 @@ async function fetchCurrentConfig() {
         if (!response.ok) return;
         const config = await response.json();
         
-        // Update sliders & display labels
         document.getElementById('slider-anomaly-threshold').value = config.anomaly_threshold;
         document.getElementById('val-anomaly-threshold').textContent = config.anomaly_threshold.toFixed(2);
         
@@ -357,6 +535,11 @@ async function fetchCurrentConfig() {
         document.getElementById('slider-w-iso').value = Math.round(config.w_iso * 100);
         document.getElementById('val-w-iso').textContent = Math.round(config.w_iso * 100) + '%';
         
+        if (config.w_ae !== undefined) {
+            document.getElementById('slider-w-ae').value = Math.round(config.w_ae * 100);
+            document.getElementById('val-w-ae').textContent = Math.round(config.w_ae * 100) + '%';
+        }
+
         document.getElementById('slider-w-lof').value = Math.round(config.w_lof * 100);
         document.getElementById('val-w-lof').textContent = Math.round(config.w_lof * 100) + '%';
         
@@ -387,13 +570,13 @@ async function applyModelConfig() {
     const anomalyThreshold = parseFloat(document.getElementById('slider-anomaly-threshold').value);
     const zThreshold = parseFloat(document.getElementById('slider-z-threshold').value);
     
-    // Parse weight percentages to decimals
     const wIso = parseInt(document.getElementById('slider-w-iso').value) / 100;
+    const wAe = parseInt(document.getElementById('slider-w-ae').value) / 100;
     const wLof = parseInt(document.getElementById('slider-w-lof').value) / 100;
     const wStat = parseInt(document.getElementById('slider-w-stat').value) / 100;
     const wRange = parseInt(document.getElementById('slider-w-range').value) / 100;
     
-    const applyBtn = document.querySelector('.config-apply-btn');
+    const applyBtn = document.getElementById('apply-config-btn');
     const origText = applyBtn.textContent;
     
     try {
@@ -402,6 +585,7 @@ async function applyModelConfig() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 w_iso: wIso,
+                w_ae: wAe,
                 w_lof: wLof,
                 w_stat: wStat,
                 w_range: wRange,
@@ -412,14 +596,18 @@ async function applyModelConfig() {
         
         const result = await response.json();
         if (response.ok) {
-            applyBtn.textContent = "Settings Applied!";
+            applyBtn.textContent = "Hyperparameters Applied!";
             applyBtn.style.backgroundColor = "var(--sev-normal)";
             
-            // Re-read back from the response (which normalizes weights if they didn't sum to 1.0)
             const updated = result.config;
             document.getElementById('slider-w-iso').value = Math.round(updated.w_iso * 100);
             document.getElementById('val-w-iso').textContent = Math.round(updated.w_iso * 100) + '%';
             
+            if (updated.w_ae !== undefined) {
+                document.getElementById('slider-w-ae').value = Math.round(updated.w_ae * 100);
+                document.getElementById('val-w-ae').textContent = Math.round(updated.w_ae * 100) + '%';
+            }
+
             document.getElementById('slider-w-lof').value = Math.round(updated.w_lof * 100);
             document.getElementById('val-w-lof').textContent = Math.round(updated.w_lof * 100) + '%';
             
@@ -445,7 +633,7 @@ async function applyModelConfig() {
 async function executeRemedy(deviceId, btn) {
     if (!btn) return;
     const origText = btn.textContent;
-    btn.textContent = "Resolving...";
+    btn.textContent = "Executing...";
     btn.disabled = true;
     btn.style.opacity = "0.7";
     
@@ -457,10 +645,9 @@ async function executeRemedy(deviceId, btn) {
         
         const result = await response.json();
         if (response.ok) {
-            btn.textContent = "Remedied!";
+            btn.textContent = "Recovered!";
             btn.style.backgroundColor = "var(--sev-normal)";
             
-            // Clean up visual box shortly
             setTimeout(() => {
                 const container = document.getElementById(`remedy-container-${deviceId}`);
                 if (container) container.innerHTML = "";
@@ -488,16 +675,12 @@ function handleDeviceStatusUpdate(msg) {
     const devId = msg.device_id;
     const status = msg.status;
     
-    // Update local state registry
     if (devices[devId]) {
         devices[devId].status = status;
     }
     
-    // Update UI elements
     const checkbox = document.getElementById(`status-toggle-${devId}`);
-    if (checkbox) {
-        checkbox.checked = (status === 'online');
-    }
+    if (checkbox) checkbox.checked = (status === 'online');
     
     const badge = document.getElementById(`status-badge-${devId}`);
     const badgeText = badge ? badge.querySelector('.status-badge-text') : null;
@@ -509,30 +692,23 @@ function handleDeviceStatusUpdate(msg) {
     }
     
     if (card) {
-        if (status === 'offline') {
-            card.classList.add('device-offline');
-        } else {
-            card.classList.remove('device-offline');
-        }
+        if (status === 'offline') card.classList.add('device-offline');
+        else card.classList.remove('device-offline');
     }
 }
 
 async function toggleDeviceConnection(deviceId) {
     try {
-        const response = await fetch(`/api/devices/${deviceId}/toggle`, {
-            method: 'POST'
-        });
+        const response = await fetch(`/api/devices/${deviceId}/toggle`, { method: 'POST' });
         const result = await response.json();
         if (!response.ok) {
             alert("Error toggling device state: " + result.detail);
-            // Revert checkbox state
             const checkbox = document.getElementById(`status-toggle-${deviceId}`);
             if (checkbox) checkbox.checked = !checkbox.checked;
         }
     } catch (e) {
         console.error("Failed to toggle device connection", e);
         alert("Failed to connect to edge server to toggle device connection");
-        // Revert checkbox state
         const checkbox = document.getElementById(`status-toggle-${deviceId}`);
         if (checkbox) checkbox.checked = !checkbox.checked;
     }
@@ -544,21 +720,19 @@ async function retrainModels() {
     if (!btn || !statusEl) return;
     
     const origText = btn.textContent;
-    btn.textContent = "Retraining in progress...";
+    btn.textContent = "Retraining Ensemble & Autoencoder...";
     btn.disabled = true;
     btn.style.opacity = "0.7";
-    statusEl.textContent = "Processing SQLite historical logs...";
+    statusEl.textContent = "Fitting Autoencoder + IF + LOF on SQLite logs...";
     statusEl.style.color = "var(--accent-blue)";
     
     try {
-        const response = await fetch('/api/models/retrain', {
-            method: 'POST'
-        });
+        const response = await fetch('/api/models/retrain', { method: 'POST' });
         const result = await response.json();
         if (response.ok) {
-            btn.textContent = "Success!";
+            btn.textContent = "Adapted!";
             btn.style.backgroundColor = "var(--sev-normal)";
-            statusEl.textContent = `Retrained on ${result.stats.sample_count} samples! Contamination: ${Math.round(result.stats.contamination * 100)}%`;
+            statusEl.textContent = `Retrained on ${result.stats.sample_count} samples! (Autoencoder + IF + LOF active)`;
             statusEl.style.color = "var(--sev-normal)";
             
             setTimeout(() => {

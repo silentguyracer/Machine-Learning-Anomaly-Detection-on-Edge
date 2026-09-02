@@ -1,5 +1,7 @@
 // Global chart registry: {"EDGE-001-temperature": Chart instance, ...}
 const chartRegistry = {};
+let latentScatterChart = null;
+let modalTimelineChart = null;
 
 // Sensor config mapping CSS vars to Chart.js
 const SENSOR_CONFIG = {
@@ -9,7 +11,8 @@ const SENSOR_CONFIG = {
   pressure:    { label: 'Press', color: '#38bdf8', min: 0, max: 5, unit: 'bar' },
 };
 
-const MAX_CHART_POINTS = 30; // Reduce points for edge mini-charts
+const MAX_CHART_POINTS = 30; // Points for edge mini-charts
+const MAX_LATENT_POINTS = 60; // Points for 2D latent scatter
 
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.font.family = "'Inter', sans-serif";
@@ -27,7 +30,7 @@ function initDeviceCharts(deviceId) {
         
         // Create gradient fill
         const gradient = ctx.createLinearGradient(0, 0, 0, 60);
-        gradient.addColorStop(0, `${config.color}40`); // 25% opacity
+        gradient.addColorStop(0, `${config.color}40`);
         gradient.addColorStop(1, `${config.color}00`);
         
         const chart = new Chart(ctx, {
@@ -49,17 +52,13 @@ function initDeviceCharts(deviceId) {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false,
-                layout: {
-                    padding: 0
-                },
+                layout: { padding: 0 },
                 plugins: {
                     legend: { display: false },
                     tooltip: { enabled: false }
                 },
                 scales: {
-                    x: {
-                        display: false
-                    },
+                    x: { display: false },
                     y: {
                         display: false,
                         min: config.min,
@@ -85,24 +84,21 @@ function updateDeviceCharts(deviceId, sensors, isAnomaly, anomalousSensors) {
         if (val === undefined) return;
         
         const dataset = chart.data.datasets[0];
-        
-        // Shift data
         dataset.data.push(val);
         if (dataset.data.length > MAX_CHART_POINTS) {
             dataset.data.shift();
         }
         
-        // Update color if anomalous
         const baseColor = SENSOR_CONFIG[sensor].color;
         if (isAnomaly && anomalousSensors && anomalousSensors.includes(sensor)) {
-            dataset.borderColor = '#ef4444'; // Red for anomaly
+            dataset.borderColor = '#ef4444';
             dataset.borderWidth = 2;
         } else {
             dataset.borderColor = baseColor;
             dataset.borderWidth = 1.5;
         }
         
-        chart.update('none'); // Update without animation for performance
+        chart.update('none');
     });
 }
 
@@ -112,21 +108,16 @@ function updateGauge(deviceId, score) {
     const textEl = document.querySelector(`#${gaugeId} .gauge-text`);
     if (!fillEl || !textEl) return;
     
-    // Normalize score (0 to 1) to percentage string
     const percent = Math.min(Math.max(score, 0), 1);
     const scoreVal = (percent * 100).toFixed(0);
     
     textEl.textContent = scoreVal;
-    
-    // Calculate arc length (path length is approx 251 for r=40, arc 180deg = PI*r = ~125.6)
-    // We use viewBox="0 0 120 70", r=40, cx=60, cy=60. Path length for 180deg = ~125.66
     const pathLength = 125.66;
     const offset = pathLength - (percent * pathLength);
     
     fillEl.style.strokeDasharray = `${pathLength}`;
     fillEl.style.strokeDashoffset = offset;
     
-    // Color mapping based on score
     let color = 'var(--sev-normal)';
     if (percent > 0.85) color = 'var(--sev-critical)';
     else if (percent > 0.65) color = 'var(--sev-high)';
@@ -134,4 +125,123 @@ function updateGauge(deviceId, score) {
     else if (percent > 0.2) color = 'var(--sev-low)';
     
     fillEl.style.stroke = color;
+}
+
+// 2D Latent Space & PCA Projection Chart
+function initLatentChart() {
+    const canvas = document.getElementById('latent-scatter-chart');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    latentScatterChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                {
+                    label: 'Normal Operational Envelope',
+                    data: [],
+                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                    borderColor: '#3b82f6',
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'Anomaly Outlier Trajectory',
+                    data: [],
+                    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+                    borderColor: '#ef4444',
+                    pointRadius: 6,
+                    pointHoverRadius: 8
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `Latent [${ctx.parsed.x.toFixed(2)}, ${ctx.parsed.y.toFixed(2)}]`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#64748b', font: { size: 9 } }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#64748b', font: { size: 9 } }
+                }
+            }
+        }
+    });
+}
+
+function updateLatentChart(coords, isAnomaly) {
+    if (!latentScatterChart || !coords || coords.length < 2) return;
+    
+    const point = { x: coords[0], y: coords[1] };
+    const datasetIdx = isAnomaly ? 1 : 0;
+    const targetDataset = latentScatterChart.data.datasets[datasetIdx];
+    
+    targetDataset.data.push(point);
+    if (targetDataset.data.length > MAX_LATENT_POINTS) {
+        targetDataset.data.shift();
+    }
+    
+    latentScatterChart.update('none');
+}
+
+// Modal Timeline Chart
+function initModalTimelineChart() {
+    const canvas = document.getElementById('modal-timeline-chart');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    modalTimelineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: Array(40).fill(''),
+            datasets: [
+                { label: 'Temperature (°C)', data: [], borderColor: '#f97316', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+                { label: 'Vibration (g)', data: [], borderColor: '#a78bfa', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+                { label: 'Current (A)', data: [], borderColor: '#22c55e', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+                { label: 'Pressure (bar)', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, tension: 0.2 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 11 } }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, display: false },
+                y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
+}
+
+function updateModalTimelineChart(sensors) {
+    if (!modalTimelineChart || !sensors) return;
+    
+    const keys = ['temperature', 'vibration', 'current', 'pressure'];
+    keys.forEach((key, idx) => {
+        const ds = modalTimelineChart.data.datasets[idx];
+        if (ds && sensors[key] !== undefined) {
+            ds.data.push(sensors[key]);
+            if (ds.data.length > 40) ds.data.shift();
+        }
+    });
+    
+    modalTimelineChart.update('none');
 }

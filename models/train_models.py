@@ -1,10 +1,18 @@
 import os
+import sys
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
 import joblib
 import sqlite3
+
+# Ensure core is importable
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from core.autoencoder import NeuralAutoencoder
 
 def generate_synthetic_data(num_samples=5000):
     t = np.arange(num_samples)
@@ -39,14 +47,18 @@ def main():
     lof = LocalOutlierFactor(n_neighbors=20, contamination=0.08, novelty=True)
     lof.fit(X_scaled)
     
+    print("Training Neural Autoencoder (Latent space 2D + Reconstruction)...")
+    autoencoder = NeuralAutoencoder(input_dim=4, latent_dim=2)
+    autoencoder.fit(X_scaled, epochs=80, lr=0.015)
+    
     # Save models
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     save_dir = os.path.join(project_root, "models", "saved")
     os.makedirs(save_dir, exist_ok=True)
     
     joblib.dump(scaler, os.path.join(save_dir, "scaler.joblib"))
     joblib.dump(iso_forest, os.path.join(save_dir, "isolation_forest.joblib"))
     joblib.dump(lof, os.path.join(save_dir, "lof.joblib"))
+    autoencoder.save(os.path.join(save_dir, "autoencoder.joblib"))
     
     print(f"Models saved successfully to {save_dir}")
     print("Validation results: Models trained on normal baseline data.")
@@ -94,18 +106,24 @@ def retrain_from_db(db_path: str, save_dir: str) -> dict:
     lof = LocalOutlierFactor(n_neighbors=20, contamination=0.06, novelty=True)
     lof.fit(X_scaled)
     
+    # Fit Autoencoder
+    autoencoder = NeuralAutoencoder(input_dim=4, latent_dim=2)
+    autoencoder.fit(X_scaled, epochs=60, lr=0.015)
+    
     # Save the updated models
     os.makedirs(save_dir, exist_ok=True)
     joblib.dump(scaler, os.path.join(save_dir, "scaler.joblib"))
     joblib.dump(iso_forest, os.path.join(save_dir, "isolation_forest.joblib"))
     joblib.dump(lof, os.path.join(save_dir, "lof.joblib"))
+    autoencoder.save(os.path.join(save_dir, "autoencoder.joblib"))
     
     print(f"Successfully retrained and saved models to {save_dir}")
     return {
         "status": "success",
         "sample_count": sample_count,
         "contamination": 0.06,
-        "n_estimators": 100
+        "n_estimators": 100,
+        "autoencoder_trained": True
     }
 
 if __name__ == "__main__":

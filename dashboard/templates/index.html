@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ML Anomaly Detection Edge Dashboard</title>
+    <title>Edge AI Anomaly Detection & Predictive Maintenance</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -26,9 +26,15 @@
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                     </svg>
                 </div>
-                <h1 class="dashboard-title">Edge AI Anomaly Detection</h1>
+                <div>
+                    <h1 class="dashboard-title">Edge AI Prognostics & Anomaly Detection</h1>
+                    <div class="dashboard-subtitle">Neural Autoencoder • Isolation Forest • LOF • Predictive Maintenance (RUL)</div>
+                </div>
             </div>
             <div class="header-right">
+                <button class="audio-alarm-toggle" id="audio-alarm-btn" onclick="toggleAudioAlarm()">
+                    <span id="audio-icon">🔔</span> <span id="audio-text">Audio Alert: ON</span>
+                </button>
                 <div class="connection-status" id="connection-status">
                     <span class="status-dot"></span>
                     <span class="status-text">OFFLINE</span>
@@ -52,8 +58,12 @@
                 <div class="metric-value" id="stat-anomaly-rate">0.00%</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">Active Devices</div>
+                <div class="metric-label">Active Edge Nodes</div>
                 <div class="metric-value" id="stat-active-devices">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Fleet Health Avg</div>
+                <div class="metric-value" id="stat-fleet-health" style="color: var(--sev-normal);">100%</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">System Uptime</div>
@@ -63,11 +73,31 @@
 
         <!-- MAIN LAYOUT -->
         <div class="main-layout">
-            <!-- DEVICE GRID -->
+            <!-- DEVICE GRID & LATENT VISUALIZER -->
             <div class="devices-section">
-                <h2 class="section-title">Edge Devices</h2>
+                <div class="section-header-bar">
+                    <h2 class="section-title">Edge IoT Nodes (Click Card for Deep-Dive)</h2>
+                    <span class="badge-hint">⚡ Interactive Diagnostics Enabled</span>
+                </div>
                 <div class="device-grid" id="device-grid">
-                    <!-- Cards will be dynamically inserted here -->
+                    <!-- Cards dynamically inserted here -->
+                </div>
+
+                <!-- 2D LATENT SPACE & PCA PROJECTION VISUALIZER -->
+                <div class="latent-visualizer-card">
+                    <div class="latent-header">
+                        <div class="latent-title">
+                            <span>🧠 2D Latent Space & PCA Cluster Projection (Real-Time)</span>
+                            <span class="latent-sub">Neural Autoencoder Bottleneck ($z_1, z_2$) Real-time Trajectory</span>
+                        </div>
+                        <div class="latent-legend">
+                            <span class="legend-item"><span class="legend-dot normal-dot"></span> Normal Envelope</span>
+                            <span class="legend-item"><span class="legend-dot anomaly-dot"></span> Anomaly Outlier</span>
+                        </div>
+                    </div>
+                    <div class="latent-chart-container">
+                        <canvas id="latent-scatter-chart"></canvas>
+                    </div>
                 </div>
             </div>
 
@@ -76,30 +106,30 @@
                 <!-- ALERT FEED -->
                 <aside class="alerts-sidebar">
                     <div class="alerts-header">
-                        <h2 class="section-title">Alert Feed</h2>
+                        <h2 class="section-title">Alert & Event Stream</h2>
                         <span class="alert-counter" id="alert-counter">0</span>
                         <div class="alerts-actions" style="display: flex; gap: 6px;">
-                            <button class="clear-alerts-btn" onclick="exportAlerts()">Export</button>
+                            <button class="clear-alerts-btn" onclick="exportAlerts()">Export CSV</button>
                             <button class="clear-alerts-btn" onclick="clearAlerts()">Clear</button>
                         </div>
                     </div>
                     <div class="alerts-feed" id="alerts-feed">
-                        <!-- Alert items will be dynamically inserted here -->
+                        <!-- Alert items dynamically inserted here -->
                     </div>
                 </aside>
 
                 <!-- MODEL TUNING PANEL -->
                 <div class="config-card">
                     <div class="config-header">
-                        <h2 class="section-title">Model Hyperparameters</h2>
+                        <h2 class="section-title">5-Model Ensemble Arbitration</h2>
                     </div>
                     <div class="config-body">
                         <div class="config-slider-group">
                             <div class="slider-header">
-                                <span>Anomaly Threshold</span>
-                                <span id="val-anomaly-threshold">0.58</span>
+                                <span>Global Anomaly Threshold</span>
+                                <span id="val-anomaly-threshold">0.55</span>
                             </div>
-                            <input type="range" id="slider-anomaly-threshold" min="0.10" max="0.90" step="0.01" value="0.58" oninput="updateConfigValue('anomaly-threshold', this.value)">
+                            <input type="range" id="slider-anomaly-threshold" min="0.10" max="0.90" step="0.01" value="0.55" oninput="updateConfigValue('anomaly-threshold', this.value)">
                         </div>
                         
                         <div class="config-slider-group">
@@ -110,46 +140,54 @@
                             <input type="range" id="slider-z-threshold" min="1.5" max="5.0" step="0.1" value="3.0" oninput="updateConfigValue('z-threshold', this.value)">
                         </div>
 
-                        <div class="config-weight-header">Ensemble Model Weights</div>
+                        <div class="config-weight-header">Ensemble Arbitration Weights</div>
 
                         <div class="config-slider-group">
                             <div class="slider-header">
-                                <span>Isolation Forest Weight</span>
-                                <span id="val-w-iso">35%</span>
+                                <span>Isolation Forest (IF)</span>
+                                <span id="val-w-iso">28%</span>
                             </div>
-                            <input type="range" id="slider-w-iso" min="0" max="100" step="5" value="35" oninput="updateConfigValue('w-iso', this.value)">
+                            <input type="range" id="slider-w-iso" min="0" max="100" step="2" value="28" oninput="updateConfigValue('w-iso', this.value)">
+                        </div>
+
+                        <div class="config-slider-group">
+                            <div class="slider-header">
+                                <span>Neural Autoencoder (AE)</span>
+                                <span id="val-w-ae">24%</span>
+                            </div>
+                            <input type="range" id="slider-w-ae" min="0" max="100" step="2" value="24" oninput="updateConfigValue('w-ae', this.value)">
                         </div>
 
                         <div class="config-slider-group">
                             <div class="slider-header">
                                 <span>Local Outlier Factor (LOF)</span>
-                                <span id="val-w-lof">15%</span>
+                                <span id="val-w-lof">16%</span>
                             </div>
-                            <input type="range" id="slider-w-lof" min="0" max="100" step="5" value="15" oninput="updateConfigValue('w-lof', this.value)">
+                            <input type="range" id="slider-w-lof" min="0" max="100" step="2" value="16" oninput="updateConfigValue('w-lof', this.value)">
                         </div>
 
                         <div class="config-slider-group">
                             <div class="slider-header">
-                                <span>Z-Score Baseline</span>
-                                <span id="val-w-stat">30%</span>
+                                <span>Statistical Z-Score</span>
+                                <span id="val-w-stat">18%</span>
                             </div>
-                            <input type="range" id="slider-w-stat" min="0" max="100" step="5" value="30" oninput="updateConfigValue('w-stat', this.value)">
+                            <input type="range" id="slider-w-stat" min="0" max="100" step="2" value="18" oninput="updateConfigValue('w-stat', this.value)">
                         </div>
 
                         <div class="config-slider-group">
                             <div class="slider-header">
-                                <span>Range Rules Limit</span>
-                                <span id="val-w-range">20%</span>
+                                <span>Physical Range Bounds</span>
+                                <span id="val-w-range">14%</span>
                             </div>
-                            <input type="range" id="slider-w-range" min="0" max="100" step="5" value="20" oninput="updateConfigValue('w-range', this.value)">
+                            <input type="range" id="slider-w-range" min="0" max="100" step="2" value="14" oninput="updateConfigValue('w-range', this.value)">
                         </div>
 
-                        <button class="config-apply-btn" onclick="applyModelConfig()">Apply Settings</button>
+                        <button class="config-apply-btn" id="apply-config-btn" onclick="applyModelConfig()">Apply Hyperparameters</button>
 
-                        <div class="config-weight-header">Edge ML Adaptation</div>
+                        <div class="config-weight-header">Edge Continuous Learning</div>
                         <div class="retrain-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 5px;">
                             <button class="config-apply-btn retrain-btn" style="margin-top: 0; background: var(--color-vib);" onclick="retrainModels()">Adapt Models to Local Data</button>
-                            <div class="retrain-status" id="retrain-status-text" style="font-size: 0.75rem; color: var(--text-secondary); text-align: center;">Models trained on normal baseline.</div>
+                            <div class="retrain-status" id="retrain-status-text" style="font-size: 0.75rem; color: var(--text-secondary); text-align: center;">Trained on SQLite historical baseline.</div>
                         </div>
                     </div>
                 </div>
@@ -158,10 +196,59 @@
 
         <!-- FOOTER -->
         <footer class="dashboard-footer">
-            <div class="footer-info">Model: Ensemble (IF, LOF, Stat) v2.4</div>
-            <div class="footer-info">System Status: <span class="text-green">Operational</span></div>
-            <div class="footer-info">Refresh Rate: Real-time WebSockets</div>
+            <div class="footer-info">Architecture: 5-Model Edge Ensemble (Autoencoder + IF + LOF + Stat + Bounds) v3.0</div>
+            <div class="footer-info">Prognostics: <span class="text-green">Active (RUL & Health Tracking)</span></div>
+            <div class="footer-info">Stream Protocol: Sub-millisecond WebSocket</div>
         </footer>
+    </div>
+
+    <!-- INTERACTIVE DEVICE DEEP-DIVE MODAL -->
+    <div class="modal-backdrop" id="device-modal" style="display: none;" onclick="closeDeviceModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title" id="modal-device-name">Alpha Motor Diagnostics</h2>
+                    <span class="modal-subtitle" id="modal-device-id">ID: EDGE-001</span>
+                </div>
+                <button class="modal-close-btn" onclick="closeDeviceModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-top-grid">
+                    <div class="modal-stat-card">
+                        <div class="modal-stat-label">Health Index</div>
+                        <div class="modal-stat-val" id="modal-health-val">98%</div>
+                    </div>
+                    <div class="modal-stat-card">
+                        <div class="modal-stat-label">Estimated RUL</div>
+                        <div class="modal-stat-val" id="modal-rul-val">710 min</div>
+                    </div>
+                    <div class="modal-stat-card">
+                        <div class="modal-stat-label">Condition State</div>
+                        <div class="modal-stat-val" id="modal-state-val">OPTIMAL</div>
+                    </div>
+                    <div class="modal-stat-card">
+                        <div class="modal-stat-label">Current Anomaly Score</div>
+                        <div class="modal-stat-val" id="modal-score-val">0.05</div>
+                    </div>
+                </div>
+
+                <!-- Multi-Sensor Synchronized Timeline Chart -->
+                <div class="modal-chart-section">
+                    <h3 class="modal-section-title">Synchronized Multi-Sensor Timeline</h3>
+                    <div class="modal-chart-wrapper">
+                        <canvas id="modal-timeline-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Sensor Attribution Breakdown Bar -->
+                <div class="modal-attribution-section">
+                    <h3 class="modal-section-title">Neural Autoencoder Feature Attribution Loss</h3>
+                    <div class="attribution-bars" id="modal-attribution-bars">
+                        <!-- Bars dynamically rendered -->
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- SCRIPTS -->
